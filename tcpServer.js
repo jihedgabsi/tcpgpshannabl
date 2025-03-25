@@ -1,12 +1,9 @@
 const net = require('net');
 
-// Définition du port TCP
 const PORT = process.env.TCP_PORT || 5000;
-
-// Liste des clients connectés
 const clients = [];
 
-// Fonction pour extraire les données du GT06
+// Fonction pour analyser les données GT06
 function parseGT06Data(data) {
     const hexString = data.toString('hex').toUpperCase();
     console.log(`📍 Trame reçue : ${hexString}`);
@@ -17,14 +14,16 @@ function parseGT06Data(data) {
         return null;
     }
 
-    // Vérification du type de message
+    // Type de message (byte après 7878)
     const messageType = hexString.substring(4, 6);
+
     if (messageType === '01') {
-        // Message de connexion (IMEI)
-        const imei = hexString.substring(8, 23);
+        // 📡 **Message de connexion (Login Message)**
+        const imei = hexString.substring(8, 24); // IMEI sur 8 bytes (BCD codé)
         return { type: 'connexion', imei };
-    } else if (messageType === '12') {
-        // Message de localisation
+    } 
+    else if (messageType === '12') {
+        // 📍 **Message de localisation**
         const year = parseInt(hexString.substring(8, 10), 16) + 2000;
         const month = parseInt(hexString.substring(10, 12), 16);
         const day = parseInt(hexString.substring(12, 14), 16);
@@ -51,12 +50,12 @@ function parseGT06Data(data) {
             direction
         };
     } else {
-        console.log('⚠️ Type de message inconnu.');
+        console.log(`⚠️ Type de message inconnu : ${messageType}`);
         return null;
     }
 }
 
-// Création du serveur TCP
+// Serveur TCP
 const server = net.createServer((socket) => {
     const clientAddress = `${socket.remoteAddress}:${socket.remotePort}`;
     console.log(`📡 Nouveau périphérique connecté : ${clientAddress}`);
@@ -68,9 +67,9 @@ const server = net.createServer((socket) => {
         if (parsedData) {
             if (parsedData.type === 'connexion') {
                 console.log(`✅ Connexion établie avec l'IMEI : ${parsedData.imei}`);
-                
-                // Réponse ACK à l'appareil
-                const ack = Buffer.from('787805010001D9DC0D0A', 'hex');
+
+                // Réponse ACK au login
+                const ack = Buffer.from('787805010002E9DC0D0A', 'hex');
                 socket.write(ack);
             } else if (parsedData.type === 'position') {
                 console.log(`📍 Position reçue :
@@ -83,19 +82,18 @@ const server = net.createServer((socket) => {
         }
     });
 
-    // Gestion de la déconnexion
+    // Déconnexion
     socket.on('end', () => {
         console.log(`❌ Déconnexion de ${clientAddress}`);
         clients.splice(clients.indexOf(socket), 1);
     });
 
-    // Gestion des erreurs
     socket.on('error', (err) => {
         console.error(`⚠️ Erreur avec ${clientAddress} : ${err.message}`);
     });
 });
 
-// Démarrage du serveur
+// Lancer le serveur
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Serveur TCP GT06 en écoute sur le port ${PORT}`);
 });
