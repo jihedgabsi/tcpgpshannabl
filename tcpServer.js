@@ -1,113 +1,150 @@
 const net = require('net');
+const GpsData = require('./models/GpsData');
+const dotenv = require('dotenv');
+require('dotenv').config();
+const connectDB = require('./config/database');
 
-const PORT = process.env.TCP_PORT || 5000;
-const clients = [];
+dotenv.config();
+connectDB();
 
-// Fonction pour extraire l'IMEI (en BCD)
-function extractIMEI(hexString) {
-    let imei = "";
-    for (let i = 8; i < 24; i += 2) {
-        imei += parseInt(hexString.substring(i, i + 2), 16).toString();
+// Buffer accumulateur pour les données TCP
+let buffer = Buffer.alloc(0);
+
+function parseGT06N(data) {
+    buffer = Buffer.concat([buffer, data]);
+    
+    const packets = [];
+    while (buffer.length > 2) {
+        // Recherche du début de trame (0x78 0x78)
+        const startIndex = buffer.indexOf(Buffer.from([0x78, 0x78]));
+        if (startIndex === -1) {
+            buffer = buffer.slice(buffer.length - 2);
+            break;
+        }
+        
+        if (startIndex > 0) {
+            buffer = buffer.slice(startIndex);
+        }
+
+        if (buffer.length < 8) break; // Taille minimale d'une trame
+
+        const packetLength = buffer[2];
+        const totalLength = packetLength + 5; // 4 bytes header/checksum + 1 byte length
+        
+        if (buffer.length < totalLength) break;
+
+        const packet = buffer.slice(0, totalLength);
+        buffer = buffer.slice(totalLength);
+
+        // Vérification des bytes de fin (0x0D 0x0A)
+        if (packet[packet.length - 2] !== 0x0D || packet[packet.length - 1] !== 0x0A) {
+            continue;
+        }
+
+        // Calcul du checksum
+        let checksum = 0;
+        for (let i = 0; i < packet.length - 4; i++) {
+            checksum += packet[i];
+        }
+        checksum = checksum % 256;
+
+        if (checksum !== packet[packet.length - 4]) {
+            console.log('Checksum invalide');
+            continue;
+        }
+
+        packets.push(packet);
     }
-    return imei;
+
+    return packets;
 }
 
-// Fonction pour analyser les données GT06
-function parseGT06Data(data) {
-    const hexString = data.toString('hex').toUpperCase();
-    console.log(`📍 Trame reçue : ${hexString}`);
+function parseLocationData(packet) {
+    const protocol = packet[3];
+    let data = {};
 
-    // Vérification du préfixe GT06 (78 78 ou 79 79)
-    if (!hexString.startsWith('7878') && !hexString.startsWith('7979')) {
-        console.log('⚠️ Trame invalide.');
-        return null;
-    }
-
-    // Extraction correcte de la longueur et du type de message
-    const lengthHex = hexString.substring(4, 6);
-    const length = parseInt(lengthHex, 16);
-    const messageType = hexString.substring(6, 8);
-
-    console.log(`📝 Longueur annoncée : ${length} octets`);
-    console.log(`🆔 Type de message : ${messageType}`);
-
-    if (messageType === '01') {
-        // 📡 **Message de connexion (Login Message)**
-        const imei = extractIMEI(hexString);
-        return { type: 'connexion', imei };
-    } 
-    else if (messageType === '12') {
-        // 📍 **Message de localisation**
-        const year = parseInt(hexString.substring(8, 10), 16) + 2000;
-        const month = parseInt(hexString.substring(10, 12), 16);
-        const day = parseInt(hexString.substring(12, 14), 16);
-        const hour = parseInt(hexString.substring(14, 16), 16);
-        const minute = parseInt(hexString.substring(16, 18), 16);
-        const second = parseInt(hexString.substring(18, 20), 16);
-        const date = `${year}-${month}-${day} ${hour}:${minute}:${second}`;
-
-        const latitudeRaw = parseInt(hexString.substring(22, 30), 16);
-        const longitudeRaw = parseInt(hexString.substring(30, 38), 16);
-        const latitude = latitudeRaw / 1800000.0;
-        const longitude = longitudeRaw / 1800000.0;
-
-        const speed = parseInt(hexString.substring(38, 40), 16);
-        const directionRaw = parseInt(hexString.substring(40, 44), 16);
-        const direction = directionRaw & 0x03FF; // 10 bits pour la direction
-
-        return { 
-            type: 'position',
-            date,
-            latitude,
-            longitude,
-            speed,
-            direction
+    // Exemple pour le protocole de localisation (0x12)
+    if (protocol === 0x12) {
+        const dateTime = packet.slice(4, 10);
+        const satellite = packet[10];
+        const lat = packet.readUInt32BE(11) / 1000000;
+        const lon = packet.readUInt32BE(15) / 1000000;
+        const speed = packet[19];
+        const courseStatus = packet.readUInt16BE(20);
+        
+        // Conversion DDDMM.MMMMMM → DD.DDDDDD
+        data = {
+            deviceId: packet.readUInt32BE(4).toString(),
+            latitude: convertCoordinate(lat),
+            longitude: convertCoordinate(lon),
+            speed: speed,
+            direction: courseStatus & 0x03FF,
+            datetime: parseDateTime(dateTime),
+            status: (courseStatus >> 10) & 0x03
         };
-    } else {
-        console.log(`⚠️ Type de message inconnu : ${messageType}`);
-        return null;
     }
+
+    return data;
 }
 
-// Serveur TCP
-const server = net.createServer((socket) => {
-    const clientAddress = `${socket.remoteAddress}:${socket.remotePort}`;
-    console.log(`📡 Nouveau périphérique connecté : ${clientAddress}`);
+function convertCoordinate(value) {
+    const degrees = Math.floor(value / 100);
+    const minutes = value - (degrees * 100);
+    return degrees + (minutes / 60);
+}
 
-    clients.push(socket);
+function parseDateTime(rawDate) {
+    const year = 2000 + rawDate[0];
+    const month = rawDate[1];
+    const day = rawDate[2];
+    const hour = rawDate[3];
+    const minute = rawDate[4];
+    const second = rawDate[5];
+    return new Date(year, month - 1, day, hour, minute, second);
+}
 
-    socket.on('data', (data) => {
-        const parsedData = parseGT06Data(data);
-        if (parsedData) {
-            if (parsedData.type === 'connexion') {
-                console.log(`✅ Connexion établie avec l'IMEI : ${parsedData.imei}`);
+const server = net.createServer(socket => {
+    console.log('Nouvelle connexion TCP');
 
-                // Réponse ACK au login
-                const ack = Buffer.from('787805010002E9DC0D0A', 'hex');
-                socket.write(ack);
-            } else if (parsedData.type === 'position') {
-                console.log(`📍 Position reçue :
-                - Date : ${parsedData.date}
-                - Latitude : ${parsedData.latitude}
-                - Longitude : ${parsedData.longitude}
-                - Vitesse : ${parsedData.speed} km/h
-                - Direction : ${parsedData.direction}°`);
+    socket.on('data', async data => {
+        const packets = parseGT06N(data);
+
+        for (const packet of packets) {
+            const protocol = packet[3];
+            
+            // Réponse pour connexion (protocole 0x01)
+            if (protocol === 0x01) {
+                const response = Buffer.from([0x78, 0x78, 0x05, 0x01, 0x00, 0x01, 0xD9, 0xDC, 0x0D, 0x0A]);
+                socket.write(response);
+                console.log('Réponse login envoyée');
+            }
+            
+            if (protocol === 0x12) {
+                const locationData = parseLocationData(packet);
+                console.log('Données GPS:', locationData);
+
+                try {
+                    const existingGpsEntry = await GpsData.findOne({ deviceId: locationData.deviceId });
+                    
+                    if (existingGpsEntry) {
+                        await GpsData.updateOne(
+                            { deviceId: locationData.deviceId },
+                            { ...locationData, updatedAt: new Date() }
+                        );
+                    } else {
+                        const gpsEntry = new GpsData(locationData);
+                        await gpsEntry.save();
+                    }
+                } catch (error) {
+                    console.error("Erreur base de données:", error);
+                }
             }
         }
     });
 
-    // Déconnexion
-    socket.on('end', () => {
-        console.log(`❌ Déconnexion de ${clientAddress}`);
-        clients.splice(clients.indexOf(socket), 1);
-    });
-
-    socket.on('error', (err) => {
-        console.error(`⚠️ Erreur avec ${clientAddress} : ${err.message}`);
-    });
+    socket.on('error', err => console.error("Erreur socket:", err));
+    socket.on('end', () => console.log("Connexion terminée"));
 });
 
-// Lancer le serveur
-server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Serveur TCP GT06 en écoute sur le port ${PORT}`);
-});
+const PORT = process.env.TCP_PORT || 5000;
+server.listen(PORT, '0.0.0.0', () => console.log(`Serveur TCP en écoute sur le port ${PORT}`));
