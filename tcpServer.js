@@ -4,8 +4,17 @@ const server = net.createServer(socket => {
     console.log('Nouvelle connexion TCP');
 
     socket.on('data', data => {
-        const message = data.toString().trim();
-        console.log(`📡 Données GPS reçues : ${message}`);
+        // Afficher les données brutes en hexadécimal
+        const hexData = data.toString('hex');
+        console.log(`📡 Données brutes (hexadécimal) : ${hexData}`);
+
+        try {
+            // Convertir en texte lisible si possible
+            const textData = data.toString('utf-8');
+            console.log(`📝 Données GPS décodées : ${textData}`);
+        } catch (error) {
+            console.error("❌ Erreur de décodage des données GPS :", error);
+        }
     });
 
     socket.on('error', err => console.error("❌ Erreur socket :", err));
