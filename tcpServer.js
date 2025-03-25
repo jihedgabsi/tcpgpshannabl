@@ -23,8 +23,8 @@ class GT06NDecoder {
       const protocolNumber = buffer[3];
 
       // Vérification de l'en-tête et de la version du protocole
-      if (start !== 0x7878 || protocolNumber !== this.protocolVersion) {
-        throw new Error('En-tête ou version de protocole invalide');
+      if (start !== 0x7878) {
+        throw new Error('En-tête invalide');
       }
 
       // Type de message
@@ -38,11 +38,10 @@ class GT06NDecoder {
           return this.decodePosition(buffer);
         case 0x13: // Status
           return this.decodeStatus(buffer);
+        case 0x05: // Heartbeat/Handshake
+          return this.decodeHeartbeat(buffer);
         default:
-          return { 
-            type: 'unknown', 
-            raw: buffer.toString('hex') 
-          };
+          return this.decodeUnknownMessage(buffer);
       }
     } catch (error) {
       return { 
@@ -80,10 +79,37 @@ class GT06NDecoder {
 
   // Décodage du statut
   decodeStatus(buffer) {
-    // Implémentation du décodage de statut
     return {
       type: 'status',
       raw: buffer.toString('hex')
+    };
+  }
+
+  // Décodage des messages heartbeat/handshake
+  decodeHeartbeat(buffer) {
+    // Exemple de décodage basique d'un heartbeat
+    return {
+      type: 'heartbeat',
+      raw: buffer.toString('hex')
+    };
+  }
+
+  // Décodage des messages inconnus avec plus de détails
+  decodeUnknownMessage(buffer) {
+    // Extraction de l'IMEI potentiel
+    const potentialImei = buffer.slice(5, 12).toString('hex');
+
+    return {
+      type: 'unknown',
+      raw: buffer.toString('hex'),
+      details: {
+        bufferLength: buffer.length,
+        startBytes: buffer.slice(0, 2).toString('hex'),
+        lengthByte: buffer[2],
+        protocolByte: buffer[3],
+        messageType: buffer[4],
+        potentialImei: potentialImei
+      }
     };
   }
 
@@ -139,9 +165,22 @@ class GT06NServer {
               console.log('Statut du tracker', decodedMessage);
               break;
 
+            case 'heartbeat':
+              console.log('Heartbeat reçu', decodedMessage);
+              this.handleHeartbeat(decodedMessage);
+              break;
+
+            case 'unknown':
+              console.log('Message non reconnu détaillé:', decodedMessage);
+              this.logUnknownMessage(decodedMessage);
+              break;
+
             default:
-              console.log('Message non reconnu', decodedMessage);
+              console.log('Message non géré', decodedMessage);
           }
+
+          // Réponse de confirmation (si nécessaire)
+          this.sendConfirmation(socket, decodedMessage);
         } catch (error) {
           console.error('Erreur de décodage:', error);
         }
@@ -157,10 +196,34 @@ class GT06NServer {
   // Méthode de gestion de la connexion du tracker
   async handleLogin(imei) {
     try {
-      // Logique de vérification/enregistrement du tracker
       console.log(`Tracker ${imei} connecté`);
+      // Logique supplémentaire si nécessaire
     } catch (error) {
       console.error('Erreur lors de la gestion du login:', error);
+    }
+  }
+
+  // Gestion des heartbeats
+  handleHeartbeat(heartbeatData) {
+    console.log('Heartbeat traité:', heartbeatData);
+  }
+
+  // Enregistrement des messages inconnus pour analyse
+  logUnknownMessage(messageData) {
+    console.log('Détails du message inconnu:', JSON.stringify(messageData, null, 2));
+    // Possibilité d'ajouter une logique pour stocker ces messages pour analyse
+  }
+
+  // Envoi d'une confirmation au tracker
+  sendConfirmation(socket, message) {
+    // Implémentation basique de confirmation
+    // Le format exact dépend du protocole spécifique du tracker
+    try {
+      // Exemple de confirmation générique
+      const confirmationBuffer = Buffer.from([0x78, 0x78, 0x05, 0x01, 0x00, 0x00, 0x0D, 0x0A]);
+      socket.write(confirmationBuffer);
+    } catch (error) {
+      console.error('Erreur lors de l\'envoi de la confirmation:', error);
     }
   }
 
