@@ -3,6 +3,15 @@ const net = require('net');
 const PORT = process.env.TCP_PORT || 5000;
 const clients = [];
 
+// Fonction pour extraire l'IMEI du message de connexion
+function extractIMEI(hexString) {
+    let imei = "";
+    for (let i = 8; i < 24; i += 2) {
+        imei += parseInt(hexString.substring(i, i + 2), 16).toString();
+    }
+    return imei;
+}
+
 // Fonction pour analyser les données GT06
 function parseGT06Data(data) {
     const hexString = data.toString('hex').toUpperCase();
@@ -19,7 +28,7 @@ function parseGT06Data(data) {
 
     if (messageType === '01') {
         // 📡 **Message de connexion (Login Message)**
-        const imei = hexString.substring(8, 24); // IMEI sur 8 bytes (BCD codé)
+        const imei = extractIMEI(hexString);
         return { type: 'connexion', imei };
     } 
     else if (messageType === '12') {
