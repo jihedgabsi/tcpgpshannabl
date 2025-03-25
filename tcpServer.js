@@ -9,15 +9,20 @@ connectDB();
 
 const server = net.createServer(socket => {
     console.log('Nouvelle connexion TCP');
+    let buffer = '';
 
     socket.on('data', async data => {
-        const message = data.toString().trim();
-        console.log(`Données JSON reçues : ${message}`);
-
+        const receivedData = data.toString();
+        buffer += receivedData;
+        
         try {
-            // Parse les données JSON
-            const jsonData = JSON.parse(message);
-            console.log('Contenu JSON parsé :', JSON.stringify(jsonData, null, 2));
+            // Attempt to parse complete JSON
+            const jsonData = JSON.parse(buffer);
+            
+            // Reset buffer after successful parsing
+            buffer = '';
+
+            console.log('Données JSON reçues :', JSON.stringify(jsonData, null, 2));
 
             // Vérifier si les champs nécessaires sont présents
             if (jsonData.deviceId && jsonData.latitude && jsonData.longitude) {
@@ -55,12 +60,17 @@ const server = net.createServer(socket => {
                 console.log("Données JSON incomplètes");
             }
         } catch (parseError) {
-            console.error("Erreur de parsing JSON :", parseError);
+            // Si le parsing échoue, cela peut être dû à des données partielles
+            // On conserve le buffer pour le prochain morceau de données
+            console.log("Données partielles reçues, en attente du reste...");
         }
     });
 
     socket.on('error', err => console.error("Erreur socket :", err));
-    socket.on('end', () => console.log("Connexion terminée"));
+    socket.on('end', () => {
+        console.log("Connexion terminée");
+        buffer = ''; // Réinitialiser le buffer
+    });
 });
 
 // Démarrer le serveur TCP
