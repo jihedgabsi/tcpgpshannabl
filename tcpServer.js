@@ -1,108 +1,134 @@
 const net = require('net');
+const crc = require('crc'); // Ajouter avec: npm install crc
 
 const PORT = process.env.TCP_PORT || 5000;
-const clients = [];
+const clients = new Map();
 
-// Fonction pour extraire l'IMEI du message de connexion
-function extractIMEI(hexString) {
-    let imei = "";
-    for (let i = 8; i < 24; i += 2) {
-        imei += parseInt(hexString.substring(i, i + 2), 16).toString();
-    }
-    return imei;
+// Fonction améliorée d'extraction de l'IMEI
+function extractIMEI(packet) {
+    return packet.slice(4, 19).toString('ascii');
 }
 
-// Fonction pour analyser les données GT06
+// Nouvelle fonction de validation checksum
+function validateChecksum(packet) {
+    const receivedChecksum = packet[packet.length - 4];
+    let calculatedChecksum = 0;
+    for (let i = 2; i < packet.length - 4; i++) {
+        calculatedChecksum += packet[i];
+    }
+    return (calculatedChecksum % 256) === receivedChecksum;
+}
+
+// Version corrigée du parser GT06
 function parseGT06Data(data) {
-    const hexString = data.toString('hex').toUpperCase();
-    console.log(`📍 Trame reçue : ${hexString}`);
+    try {
+        const startBytes = data.readUInt16BE(0);
+        if (startBytes !== 0x7878 && startBytes !== 0x7979) {
+            console.log('⚠️ Trame invalide (mauvais header)');
+            return null;
+        }
 
-    // Vérification du préfixe GT06 (78 78 ou 79 79)
-    if (!hexString.startsWith('7878') && !hexString.startsWith('7979')) {
-        console.log('⚠️ Trame invalide.');
-        return null;
-    }
+        const packetLength = data[2];
+        const protocol = data[3];
+        
+        if (!validateChecksum(data)) {
+            console.log('⚠️ Checksum invalide');
+            return null;
+        }
 
-    // Type de message (byte après 7878)
-    const messageType = hexString.substring(4, 6);
+        switch(protocol) {
+            case 0x01: // Login
+                return {
+                    type: 'login',
+                    imei: extractIMEI(data),
+                    serial: data.readUInt16BE(19)
+                };
 
-    if (messageType === '01') {
-        // 📡 **Message de connexion (Login Message)**
-        const imei = extractIMEI(hexString);
-        return { type: 'connexion', imei };
-    } 
-    else if (messageType === '12') {
-        // 📍 **Message de localisation**
-        const year = parseInt(hexString.substring(8, 10), 16) + 2000;
-        const month = parseInt(hexString.substring(10, 12), 16);
-        const day = parseInt(hexString.substring(12, 14), 16);
-        const hour = parseInt(hexString.substring(14, 16), 16);
-        const minute = parseInt(hexString.substring(16, 18), 16);
-        const second = parseInt(hexString.substring(18, 20), 16);
-        const date = `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+            case 0x12: // Données GPS
+                const date = new Date(
+                    2000 + data[4],
+                    data[5] - 1,
+                    data[6],
+                    data[7],
+                    data[8],
+                    data[9]
+                );
+                
+                return {
+                    type: 'gps',
+                    date: date.toISOString(),
+                    latitude: data.readUInt32BE(11) / 1800000,
+                    longitude: data.readUInt32BE(15) / 1800000,
+                    speed: data[19],
+                    direction: data.readUInt16BE(20) & 0x03FF,
+                    flags: (data.readUInt16BE(20) >> 10) & 0x03,
+                    satellites: data[10]
+                };
 
-        const latitudeRaw = parseInt(hexString.substring(22, 30), 16);
-        const longitudeRaw = parseInt(hexString.substring(30, 38), 16);
-        const latitude = latitudeRaw / 1800000.0;
-        const longitude = longitudeRaw / 1800000.0;
+            case 0x13: // Heartbeat
+                return { type: 'heartbeat' };
 
-        const speed = parseInt(hexString.substring(38, 40), 16);
-        const directionRaw = parseInt(hexString.substring(40, 44), 16);
-        const direction = directionRaw & 0x03FF; // 10 bits pour la direction
+            case 0x16: // Alarme
+                return { type: 'alarm', code: data.readUInt16BE(21) };
 
-        return { 
-            type: 'position',
-            date,
-            latitude,
-            longitude,
-            speed,
-            direction
-        };
-    } else {
-        console.log(`⚠️ Type de message inconnu : ${messageType}`);
+            default:
+                console.log(`⚠️ Type de message non géré : 0x${protocol.toString(16)}`);
+                return null;
+        }
+    } catch (error) {
+        console.error('Erreur de parsing:', error);
         return null;
     }
 }
 
-// Serveur TCP
+// Serveur TCP amélioré
 const server = net.createServer((socket) => {
-    const clientAddress = `${socket.remoteAddress}:${socket.remotePort}`;
-    console.log(`📡 Nouveau périphérique connecté : ${clientAddress}`);
-
-    clients.push(socket);
+    const clientKey = `${socket.remoteAddress}:${socket.remotePort}`;
+    console.log(`📡 Nouvelle connexion: ${clientKey}`);
 
     socket.on('data', (data) => {
-        const parsedData = parseGT06Data(data);
-        if (parsedData) {
-            if (parsedData.type === 'connexion') {
-                console.log(`✅ Connexion établie avec l'IMEI : ${parsedData.imei}`);
+        try {
+            const result = parseGT06Data(data);
+            if (!result) return;
 
-                // Réponse ACK au login
-                const ack = Buffer.from('787805010002E9DC0D0A', 'hex');
-                socket.write(ack);
-            } else if (parsedData.type === 'position') {
-                console.log(`📍 Position reçue :
-                - Date : ${parsedData.date}
-                - Latitude : ${parsedData.latitude}
-                - Longitude : ${parsedData.longitude}
-                - Vitesse : ${parsedData.speed} km/h
-                - Direction : ${parsedData.direction}°`);
+            switch(result.type) {
+                case 'login':
+                    console.log(`✅ Login IMEI: ${result.imei}`);
+                    clients.set(result.imei, socket);
+                    // Réponse login correcte
+                    const response = Buffer.from('787805010001D9DC0D0A', 'hex');
+                    socket.write(response);
+                    break;
+
+                case 'gps':
+                    console.log(`📍 Position ${result.imei || 'inconnu'}:
+                    Lat: ${result.latitude.toFixed(6)}, Lon: ${result.longitude.toFixed(6)}
+                    Vitesse: ${result.speed} km/h, Sat: ${result.satellites}`);
+                    break;
+
+                case 'heartbeat':
+                    socket.write(Buffer.from('78780513000159C50D0A', 'hex'));
+                    break;
+
+                case 'alarm':
+                    console.log(`🚨 Alarme ${result.code} de ${result.imei}`);
+                    break;
             }
+        } catch (error) {
+            console.error('Erreur traitement data:', error);
         }
     });
 
-    // Déconnexion
     socket.on('end', () => {
-        console.log(`❌ Déconnexion de ${clientAddress}`);
-        clients.splice(clients.indexOf(socket), 1);
+        console.log(`❌ Déconnexion: ${clientKey}`);
+        clients.delete(clientKey);
     });
 
     socket.on('error', (err) => {
-        console.error(`⚠️ Erreur avec ${clientAddress} : ${err.message}`);
+        console.error(`⚠️ Erreur ${clientKey}: ${err.message}`);
     });
 });
 
-// Lancer le serveur
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Serveur TCP GT06 en écoute sur le port ${PORT}`);
+    console.log(`🚀 Serveur GT06N actif sur port ${PORT}`);
 });
