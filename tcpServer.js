@@ -12,26 +12,38 @@ const server = net.createServer(socket => {
     let buffer = '';
 
     socket.on('data', async data => {
+        // Conversion des données en chaîne
         const receivedData = data.toString();
+        
+        // Log des données brutes reçues
+        console.log('----------------------------');
+        console.log('Données brutes reçues (raw):');
+        console.log(receivedData);
+        console.log('Longueur des données:', receivedData.length);
+        console.log('Représentation hexadécimale:');
+        console.log(Buffer.from(receivedData).toString('hex'));
+        console.log('Représentation ASCII:');
+        console.log(JSON.stringify(receivedData));
+        console.log('----------------------------');
+
         buffer += receivedData;
         
         try {
-            // Attempt to parse complete JSON
+            // Tentative de parsing JSON
             const jsonData = JSON.parse(buffer);
             
-            // Reset buffer after successful parsing
+            // Réinitialisation du buffer après parsing réussi
             buffer = '';
 
-            console.log('Données JSON reçues :', JSON.stringify(jsonData, null, 2));
+            console.log('Données JSON parsées avec succès :');
+            console.log(JSON.stringify(jsonData, null, 2));
 
-            // Vérifier si les champs nécessaires sont présents
+            // Reste du code de traitement des données GPS (comme précédemment)
             if (jsonData.deviceId && jsonData.latitude && jsonData.longitude) {
                 try {
-                    // Vérifier si le deviceId existe déjà
                     const existingGpsEntry = await GpsData.findOne({ deviceId: jsonData.deviceId });
 
                     if (existingGpsEntry) {
-                        // Mise à jour des données existantes
                         await GpsData.updateOne(
                             { deviceId: jsonData.deviceId },
                             { 
@@ -43,7 +55,6 @@ const server = net.createServer(socket => {
                         );
                         console.log("Données GPS mises à jour !");
                     } else {
-                        // Création d'un nouvel enregistrement si deviceId n'existe pas
                         const gpsEntry = new GpsData({
                             deviceId: jsonData.deviceId,
                             latitude: jsonData.latitude,
@@ -60,13 +71,16 @@ const server = net.createServer(socket => {
                 console.log("Données JSON incomplètes");
             }
         } catch (parseError) {
-            // Si le parsing échoue, cela peut être dû à des données partielles
-            // On conserve le buffer pour le prochain morceau de données
-            console.log("Données partielles reçues, en attente du reste...");
+            console.log("Erreur de parsing JSON :");
+            console.log(parseError.message);
+            console.log("Buffer actuel :", buffer);
         }
     });
 
-    socket.on('error', err => console.error("Erreur socket :", err));
+    socket.on('error', err => {
+        console.error("Erreur socket :", err);
+    });
+
     socket.on('end', () => {
         console.log("Connexion terminée");
         buffer = ''; // Réinitialiser le buffer
