@@ -170,24 +170,4 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('Prêt à recevoir des données du tracker GPS GT06N');
 });
 
-// Mise à jour du modèle GpsData pour supporter plus d'informations
-const mongoose = require('mongoose');
 
-const GpsDataSchema = new mongoose.Schema({
-    deviceId: String,
-    latitude: Number,
-    longitude: Number,
-    speed: Number,
-    timestamp: Date,
-    additionalInfo: {
-        loginData: String,
-        connectionInfo: {
-            ip: String,
-            port: Number
-        },
-        satelitesCount: Number,
-        gpsSignal: String
-    }
-});
-
-module.exports = mongoose.model('GpsData', GpsDataSchema);
