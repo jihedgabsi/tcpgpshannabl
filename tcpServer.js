@@ -1,5 +1,5 @@
 const net = require('net');
-const gt06 = require('./gt06n'); // Assuming the previous code is in gt06_parser.js
+const gt06 = require('./gt06n');
 
 const PORT = 5000;
 
@@ -16,13 +16,7 @@ const server = net.createServer((socket) => {
             
             console.log('Received GPS Data:', JSON.stringify(parsedData, null, 2));
 
-            // You can add additional logic here, such as:
-            // - Storing the data in a database
-            // - Sending alerts
-            // - Forwarding to other services
-
             // Optional: Send acknowledgment back to the tracker
-            // The exact acknowledgment depends on the GT06N protocol specifics
             const ack = Buffer.from('OK', 'ascii');
             socket.write(ack);
         } catch (error) {
