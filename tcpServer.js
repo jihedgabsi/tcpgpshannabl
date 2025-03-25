@@ -4,79 +4,69 @@ const dotenv = require('dotenv');
 require('dotenv').config();
 const connectDB = require('./config/database');
 
-function parseGT06NPacket(buffer) {
-    console.log('--- Début du parsing du paquet ---');
-    console.log('Paquet brut (hexadécimal):', buffer.toString('hex'));
-    console.log('Longueur du paquet:', buffer.length);
-
-    // Vérifier le start bit (0x78 0x78)
-    if (buffer[0] !== 0x78 || buffer[1] !== 0x78) {
-        console.log('❌ Invalid start bit');
-        return null;
+function calculateChecksum(buffer) {
+    let checksum = 0;
+    for (let i = 2; i < buffer.length - 2; i++) {
+        checksum += buffer[i];
     }
+    return checksum & 0xFFFF;
+}
 
-    // Longueur du paquet
-    const packetLength = buffer[2];
-    console.log('Longueur du paquet (payload):', packetLength);
+function createResponsePacket(protocolNumber, serialNumber) {
+    // Création d'un paquet de réponse
+    const startBits = Buffer.from([0x78, 0x78]); // Start bits
+    const lengthByte = Buffer.from([0x05]); // Longueur du paquet
+    const protocolByte = Buffer.from([protocolNumber]); // Numéro de protocole
+    const serialBytes = Buffer.from([
+        (serialNumber >> 8) & 0xFF, 
+        serialNumber & 0xFF
+    ]);
+    
+    // Calculer le checksum
+    const packetWithoutChecksum = Buffer.concat([
+        startBits, 
+        lengthByte, 
+        protocolByte, 
+        serialBytes
+    ]);
+    
+    const checksumValue = calculateChecksum(packetWithoutChecksum);
+    const checksumBytes = Buffer.from([
+        (checksumValue >> 8) & 0xFF, 
+        checksumValue & 0xFF
+    ]);
+    
+    const endBytes = Buffer.from([0x0D, 0x0A]); // End bits
+    
+    return Buffer.concat([
+        startBits, 
+        lengthByte, 
+        protocolByte, 
+        serialBytes, 
+        checksumBytes, 
+        endBytes
+    ]);
+}
 
-    // Type de protocole
+function parseLoginPacket(buffer) {
+    console.log('🔐 Parsing paquet de login');
+    
+    // Extraction des informations de login
     const protocolNumber = buffer[3];
-    console.log('Numéro de protocole:', protocolNumber.toString(16));
-
-    switch (protocolNumber) {
-        case 0x01: // Login Packet
-            console.log('📡 Paquet de login');
-            console.log('Données de login:', buffer.slice(4, -2).toString('hex'));
-            return null;
-
-        case 0x10: // GPS Location Data
-            console.log('🛰️ Paquet de données GPS');
-
-            // Extraction des données GPS
-            const year = buffer[4] + 2000;
-            const month = buffer[5];
-            const day = buffer[6];
-            const hour = buffer[7];
-            const minute = buffer[8];
-            const second = buffer[9];
-
-            console.log(`📅 Date: ${year}-${month}-${day} ${hour}:${minute}:${second}`);
-
-            // Latitude et longitude
-            const latitude = ((buffer[10] << 24) | (buffer[11] << 16) | (buffer[12] << 8) | buffer[13]) / 30000 / 60;
-            const longitude = ((buffer[14] << 24) | (buffer[15] << 16) | (buffer[16] << 8) | buffer[17]) / 30000 / 60;
-
-            // Vitesse
-            const speed = buffer[18];
-
-            // Autres informations
-            const courseAndStatus = (buffer[19] << 8) | buffer[20];
-            const satelitesCount = courseAndStatus & 0x0F;
-            const gpsSignal = (courseAndStatus >> 4) & 0x01;
-
-            const gpsData = {
-                timestamp: new Date(year, month - 1, day, hour, minute, second),
-                latitude: latitude,
-                longitude: longitude,
-                speed: speed,
-                satelitesCount: satelitesCount,
-                gpsSignal: gpsSignal ? 'Good' : 'Poor'
-            };
-
-            // Affichage détaillé des données GPS
-            console.log('🌍 Coordonnées GPS:');
-            console.log(`   Latitude: ${gpsData.latitude}`);
-            console.log(`   Longitude: ${gpsData.longitude}`);
-            console.log(`📍 Vitesse: ${gpsData.speed} km/h`);
-            console.log(`🛰️ Satellites: ${gpsData.satelitesCount}`);
-            console.log(`📶 Signal GPS: ${gpsData.gpsSignal}`);
-
-            return gpsData;
-
-        default:
-            console.log(`❓ Numéro de protocole non supporté: ${protocolNumber}`);
-            return null;
-    }
+    const loginData = buffer.slice(4, -2);
+    
+    console.log('Données de login (hexadécimal):', loginData.toString('hex'));
+    
+    // Extraction du numéro de série (2 derniers octets avant le checksum)
+    const serialNumber = (buffer[buffer.length - 4] << 8) | buffer[buffer.length - 3];
+    
+    console.log('Numéro de série:', serialNumber);
+    
+    return {
+        protocolNumber,
+        serialNumber,
+        loginData: loginData.toString('hex')
+    };
 }
 
 const server = net.createServer(socket => {
@@ -104,29 +94,49 @@ const server = net.createServer(socket => {
                     // Extraire le paquet
                     const packetBuffer = buffer.slice(0, packetLength);
                     
-                    // Parser le paquet
-                    const gpsData = parseGT06NPacket(packetBuffer);
+                    // Protocole
+                    const protocolNumber = packetBuffer[3];
 
-                    if (gpsData) {
-                        try {
-                            // Enregistrer dans la base de données
-                            const gpsEntry = new GpsData({
-                                deviceId: socket.remoteAddress, // Utiliser l'adresse IP comme identifiant
-                                latitude: gpsData.latitude,
-                                longitude: gpsData.longitude,
-                                speed: gpsData.speed,
-                                timestamp: gpsData.timestamp,
-                                additionalInfo: {
-                                    satelitesCount: gpsData.satelitesCount,
-                                    gpsSignal: gpsData.gpsSignal
-                                }
-                            });
+                    // Parsing selon le type de paquet
+                    switch (protocolNumber) {
+                        case 0x01: // Paquet de login
+                            const loginInfo = parseLoginPacket(packetBuffer);
+                            
+                            // Enregistrer les informations de login
+                            try {
+                                const deviceEntry = new GpsData({
+                                    deviceId: loginInfo.serialNumber.toString(),
+                                    additionalInfo: {
+                                        loginData: loginInfo.loginData,
+                                        connectionInfo: {
+                                            ip: socket.remoteAddress,
+                                            port: socket.remotePort
+                                        }
+                                    },
+                                    timestamp: new Date()
+                                });
+                                await deviceEntry.save();
+                                console.log('💾 Informations de login enregistrées');
+                            } catch (error) {
+                                console.error('❌ Erreur lors de l\'enregistrement:', error);
+                            }
 
-                            await gpsEntry.save();
-                            console.log('💾 Données GPS enregistrées en base de données !');
-                        } catch (error) {
-                            console.error("❌ Erreur lors de l'enregistrement :", error);
-                        }
+                            // Répondre au tracker
+                            const responsePacket = createResponsePacket(
+                                protocolNumber, 
+                                loginInfo.serialNumber
+                            );
+                            socket.write(responsePacket);
+                            console.log('✅ Réponse envoyée au tracker');
+                            break;
+
+                        case 0x10: // Paquet de données GPS
+                            console.log('🛰️ Paquet de données GPS détecté');
+                            // Implémenter le parsing des données GPS ici
+                            break;
+
+                        default:
+                            console.log(`❓ Protocole non supporté: ${protocolNumber}`);
                     }
 
                     // Supprimer le paquet traité du buffer
@@ -159,3 +169,25 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Serveur TCP en écoute sur le port ${PORT}`);
     console.log('Prêt à recevoir des données du tracker GPS GT06N');
 });
+
+// Mise à jour du modèle GpsData pour supporter plus d'informations
+const mongoose = require('mongoose');
+
+const GpsDataSchema = new mongoose.Schema({
+    deviceId: String,
+    latitude: Number,
+    longitude: Number,
+    speed: Number,
+    timestamp: Date,
+    additionalInfo: {
+        loginData: String,
+        connectionInfo: {
+            ip: String,
+            port: Number
+        },
+        satelitesCount: Number,
+        gpsSignal: String
+    }
+});
+
+module.exports = mongoose.model('GpsData', GpsDataSchema);
