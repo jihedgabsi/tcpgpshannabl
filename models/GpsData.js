@@ -1,11 +1,23 @@
 const mongoose = require('mongoose');
 
-const gpsSchema = new mongoose.Schema({
-    deviceId: { type: String, required: true },
-    latitude: { type: Number, required: true },
-    longitude: { type: Number, required: true },
-    speed: { type: Number, required: true },
-    timestamp: { type: Date, default: Date.now }
+const GpsDataSchema = new mongoose.Schema({
+    deviceId: String,
+    latitude: Number,
+    longitude: Number,
+    speed: Number,
+    timestamp: Date,
+    additionalInfo: {
+        loginData: String,
+        connectionInfo: {
+            ip: String,
+            port: Number
+        },
+        satellitesCount: Number,
+        gpsSignal: String
+    }
 });
 
-module.exports = mongoose.model('GpsData', gpsSchema);
+// Vérifier si le modèle existe déjà
+const GpsData = mongoose.models.GpsData || mongoose.model('GpsData', GpsDataSchema);
+
+module.exports = GpsData;
