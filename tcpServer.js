@@ -1,26 +1,42 @@
 const net = require('net');
 
-const server = net.createServer(socket => {
-    console.log('Nouvelle connexion TCP');
+// Définition du port et de l'adresse IP
+const PORT = process.env.TCP_PORT || 5000;
+const HOST = '0.0.0.0';
 
-    socket.on('data', data => {
-        // Afficher les données brutes en hexadécimal
-        const hexData = data.toString('hex');
-        console.log(`📡 Données brutes (hexadécimal) : ${hexData}`);
+// Création du serveur TCP
+const server = net.createServer((socket) => {
+    console.log(`Client connecté : ${socket.remoteAddress}:${socket.remotePort}`);
 
-        try {
-            // Convertir en texte lisible si possible
-            const textData = data.toString('utf-8');
-            console.log(`📝 Données GPS décodées : ${textData}`);
-        } catch (error) {
-            console.error("❌ Erreur de décodage des données GPS :", error);
+    // Gestion des données reçues
+    socket.on('data', (data) => {
+        console.log(`Données reçues : ${data.toString('hex')}`);
+
+        // Vérifier le format des données et envoyer une réponse
+        if (data.length >= 4 && data[3] === 1) {
+            console.log('Trame valide détectée.');
+
+            // Exemple de réponse
+            const response = Buffer.from([0x78, 0x78, 0x05, 0x01, 0x00, 0x00, 0x00, 0x0D, 0x0A]);
+            socket.write(response);
+            console.log('Réponse envoyée au client.');
+        } else {
+            console.log('Données reçues non valides.');
         }
     });
 
-    socket.on('error', err => console.error("❌ Erreur socket :", err));
-    socket.on('end', () => console.log("🔌 Connexion terminée"));
+    // Gestion de la fermeture de la connexion
+    socket.on('close', () => {
+        console.log(`Connexion fermée : ${socket.remoteAddress}:${socket.remotePort}`);
+    });
+
+    // Gestion des erreurs
+    socket.on('error', (err) => {
+        console.error(`Erreur sur le socket : ${err.message}`);
+    });
 });
 
-// Démarrer le serveur TCP
-const PORT = process.env.TCP_PORT || 5000;
-server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Serveur TCP en écoute sur le port ${PORT}`));
+// Démarrage du serveur TCP
+server.listen(PORT, HOST, () => {
+    console.log(`Serveur TCP en écoute sur ${HOST}:${PORT}`);
+});
