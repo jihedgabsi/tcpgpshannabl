@@ -11,8 +11,12 @@ const server = net.createServer(socket => {
     console.log('Nouvelle connexion TCP');
 
     socket.on('data', async data => {
-        const message = data.toString().trim();
-        console.log(`Données reçues : ${message}`);
+        // Affichage des données brutes en hexadécimal pour comprendre leur format
+        console.log("Données brutes reçues (Hex) : ", data.toString('hex'));
+
+        // Conversion des données en chaîne de caractères avec l'encodage UTF-8
+        const message = data.toString('utf8').trim();
+        console.log(`Données reçues (en UTF-8) : ${message}`);
 
         try {
             // Vérifiez si le message commence par '$GT06' pour être un message valide du GPS tracker
