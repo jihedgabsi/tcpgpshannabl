@@ -3,7 +3,7 @@ const GpsData = require('./models/GpsData');
 const dotenv = require('dotenv');
 require('dotenv').config();
 const connectDB = require('./config/database');
-const f = require('functions');
+const f = require('./functions');
 const crc = require('crc');
 
 dotenv.config();
