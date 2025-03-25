@@ -1,119 +1,231 @@
-const net = require('net');
-const GpsData = require('./models/GpsData');
-const dotenv = require('dotenv');
-require('dotenv').config();
-const connectDB = require('./config/database');
+const crypto = require('crypto');
 
-class GT06NDecoder {
+class UniversalGpsConverter {
   constructor() {
-    this.protocolVersion = 0x01;
+    // Bibliothèque de protocoles supportés
+    this.protocols = {
+      GT06N: this.decodeGT06N,
+      XEXUN: this.decodeXexun,
+      TELTONIKA: this.decodeTeltonika,
+      COBAN: this.decodeCoban,
+      MEITRACK: this.decodeMeitrack
+    };
   }
 
-  // Méthode principale de décodage des trames
-  decodeMessage(buffer) {
+  // Méthode principale de conversion
+  convert(rawData, protocol = null) {
+    // Normalisation des données en hexadécimal
+    const hexData = this.toHex(rawData);
+
+    // Auto-détection du protocole si non spécifié
+    if (!protocol) {
+      protocol = this.detectProtocol(hexData);
+    }
+
+    // Conversion selon le protocole
+    if (this.protocols[protocol]) {
+      return this.protocols[protocol].call(this, hexData);
+    }
+
+    // Retour par défaut si aucun protocole ne match
+    return {
+      success: false,
+      protocol: 'Unknown',
+      rawData: hexData,
+      error: 'Protocole non reconnu'
+    };
+  }
+
+  // Méthode de détection automatique du protocole
+  detectProtocol(hexData) {
+    const protocolSignatures = {
+      GT06N: /^7878/,
+      XEXUN: /^\$GPRMC/,
+      TELTONIKA: /^00000000/,
+      COBAN: /^\*HQ/,
+      MEITRACK: /^\$MEITRACK/
+    };
+
+    for (const [protocol, signature] of Object.entries(protocolSignatures)) {
+      if (signature.test(hexData)) {
+        return protocol;
+      }
+    }
+
+    return 'Unknown';
+  }
+
+  // Convertisseur GT06N
+  decodeGT06N(hexData) {
     try {
-      // Vérification de l'entête du protocole
-      if (buffer.length < 5) {
-        throw new Error('Trame trop courte');
-      }
-
-      // Lecture de l'en-tête et de la longueur
-      const start = buffer.readUInt16BE(0);
-      const length = buffer[2];
-      const protocolNumber = buffer[3];
-
-      // Vérification de l'en-tête et de la version du protocole
-      if (start !== 0x7878) {
-        throw new Error('En-tête invalide');
-      }
-
-      // Type de message
+      const buffer = Buffer.from(hexData, 'hex');
       const messageType = buffer[4];
 
-      // Décodage selon le type de message
       switch (messageType) {
         case 0x01: // Login
-          return this.decodeLogin(buffer);
+          return {
+            success: true,
+            protocol: 'GT06N',
+            type: 'login',
+            imei: buffer.slice(5, 12).toString('hex')
+          };
+
         case 0x10: // Position
-          return this.decodePosition(buffer);
-        case 0x13: // Status
-          return this.decodeStatus(buffer);
-        case 0x05: // Heartbeat/Handshake
-          return this.decodeHeartbeat(buffer);
+          const latitude = this.decodeCoordinate(buffer.slice(11, 15));
+          const longitude = this.decodeCoordinate(buffer.slice(15, 19));
+
+          return {
+            success: true,
+            protocol: 'GT06N',
+            type: 'position',
+            latitude: latitude,
+            longitude: longitude,
+            speed: buffer[19],
+            timestamp: this.decodeDate(buffer.slice(5, 11))
+          };
+
         default:
-          return this.decodeUnknownMessage(buffer);
+          return {
+            success: false,
+            protocol: 'GT06N',
+            error: 'Type de message non supporté'
+          };
       }
     } catch (error) {
-      return { 
-        error: error.message, 
-        raw: buffer.toString('hex') 
+      return {
+        success: false,
+        protocol: 'GT06N',
+        error: error.message
       };
     }
   }
 
-  // Décodage du message de login
-  decodeLogin(buffer) {
-    const imei = buffer.slice(5, 12).toString('hex');
+  // Convertisseur Xexun
+  decodeXexun(hexData) {
+    // Implémentation basique, à adapter selon le format spécifique
+    const asciiData = Buffer.from(hexData, 'hex').toString('ascii');
+    const parts = asciiData.split(',');
+
+    if (parts[0] === '$GPRMC' && parts.length >= 7) {
+      return {
+        success: true,
+        protocol: 'XEXUN',
+        type: 'position',
+        latitude: this.convertDMSToDecimal(parts[3], parts[4]),
+        longitude: this.convertDMSToDecimal(parts[5], parts[6]),
+        speed: parseFloat(parts[7]) || 0
+      };
+    }
+
     return {
-      type: 'login',
-      imei: imei
+      success: false,
+      protocol: 'XEXUN',
+      error: 'Format de données invalide'
     };
   }
 
-  // Décodage des données de position
-  decodePosition(buffer) {
-    // Extraction des données GPS
-    const date = this.decodeDate(buffer.slice(5, 11));
-    const latitude = this.decodeCoordinate(buffer.slice(11, 15));
-    const longitude = this.decodeCoordinate(buffer.slice(15, 19));
+  // Convertisseur Teltonika
+  decodeTeltonika(hexData) {
+    // Implémentation basique, nécessite des ajustements selon le modèle exact
+    try {
+      const buffer = Buffer.from(hexData, 'hex');
+      return {
+        success: true,
+        protocol: 'TELTONIKA',
+        type: 'position',
+        rawData: hexData
+      };
+    } catch (error) {
+      return {
+        success: false,
+        protocol: 'TELTONIKA',
+        error: error.message
+      };
+    }
+  }
+
+  // Convertisseur Coban
+  decodeCoban(hexData) {
+    const asciiData = Buffer.from(hexData, 'hex').toString('ascii');
+    const parts = asciiData.split(',');
+
+    if (parts[0] === '*HQ' && parts.length >= 10) {
+      return {
+        success: true,
+        protocol: 'COBAN',
+        type: 'position',
+        latitude: parseFloat(parts[3]),
+        longitude: parseFloat(parts[5]),
+        speed: parseFloat(parts[7]) || 0
+      };
+    }
+
+    return {
+      success: false,
+      protocol: 'COBAN',
+      error: 'Format de données invalide'
+    };
+  }
+
+  // Convertisseur Meitrack
+  decodeMeitrack(hexData) {
+    const asciiData = Buffer.from(hexData, 'hex').toString('ascii');
+    const parts = asciiData.split(',');
+
+    if (parts[0] === '$MEITRACK' && parts.length >= 15) {
+      return {
+        success: true,
+        protocol: 'MEITRACK',
+        type: 'position',
+        latitude: parseFloat(parts[3]),
+        longitude: parseFloat(parts[5]),
+        speed: parseFloat(parts[7]) || 0
+      };
+    }
+
+    return {
+      success: false,
+      protocol: 'MEITRACK',
+      error: 'Format de données invalide'
+    };
+  }
+
+  // Utilitaires de conversion
+
+  // Convertit différents formats d'entrée en hexadécimal
+  toHex(data) {
+    if (typeof data === 'string') {
+      // Si déjà en hex
+      if (/^[0-9A-Fa-f]+$/.test(data)) return data;
+      
+      // Conversion de string ASCII
+      return Buffer.from(data).toString('hex');
+    }
     
-    return {
-      type: 'position',
-      date: date,
-      latitude: latitude,
-      longitude: longitude,
-      speed: buffer[19],
-      course: buffer.readUInt16BE(20)
-    };
+    if (data instanceof Buffer) {
+      return data.toString('hex');
+    }
+
+    throw new Error('Format de données non supporté');
   }
 
-  // Décodage du statut
-  decodeStatus(buffer) {
-    return {
-      type: 'status',
-      raw: buffer.toString('hex')
-    };
+  // Conversion coordonnées GT06N
+  decodeCoordinate(coordBuffer) {
+    const value = coordBuffer.readUInt32BE(0);
+    const degrees = Math.floor(value / 1000000);
+    const minutes = (value % 1000000) / 10000;
+    return degrees + (minutes / 60);
   }
 
-  // Décodage des messages heartbeat/handshake
-  decodeHeartbeat(buffer) {
-    // Exemple de décodage basique d'un heartbeat
-    return {
-      type: 'heartbeat',
-      raw: buffer.toString('hex')
-    };
+  // Conversion coordonnées DMS en décimal
+  convertDMSToDecimal(value, direction) {
+    const degrees = Math.floor(parseFloat(value) / 100);
+    const minutes = parseFloat(value) % 100;
+    const decimal = degrees + (minutes / 60);
+    return direction === 'S' || direction === 'W' ? -decimal : decimal;
   }
 
-  // Décodage des messages inconnus avec plus de détails
-  decodeUnknownMessage(buffer) {
-    // Extraction de l'IMEI potentiel
-    const potentialImei = buffer.slice(5, 12).toString('hex');
-
-    return {
-      type: 'unknown',
-      raw: buffer.toString('hex'),
-      details: {
-        bufferLength: buffer.length,
-        startBytes: buffer.slice(0, 2).toString('hex'),
-        lengthByte: buffer[2],
-        protocolByte: buffer[3],
-        messageType: buffer[4],
-        potentialImei: potentialImei
-      }
-    };
-  }
-
-  // Utilitaire pour décoder la date
+  // Décodage de date GT06N
   decodeDate(dateBuffer) {
     const year = dateBuffer.readUInt8(0) + 2000;
     const month = dateBuffer.readUInt8(1);
@@ -125,165 +237,31 @@ class GT06NDecoder {
     return new Date(year, month - 1, day, hours, minutes, seconds);
   }
 
-  // Utilitaire pour décoder les coordonnées
-  decodeCoordinate(coordBuffer) {
-    const value = coordBuffer.readUInt32BE(0);
-    const degrees = Math.floor(value / 1000000);
-    const minutes = (value % 1000000) / 10000;
-    return degrees + (minutes / 60);
+  // Ajouter un nouveau protocole personnalisé
+  addProtocol(name, decoderFunction) {
+    this.protocols[name] = decoderFunction;
   }
 }
 
-class GT06NServer {
-  constructor() {
-    this.decoder = new GT06NDecoder();
-    connectDB(); // Connexion à la base de données
-  }
+// Exemple d'utilisation
+const gpsConverter = new UniversalGpsConverter();
 
-  // Création du serveur TCP
-  createServer() {
-    const server = net.createServer(socket => {
-      console.log('Nouvelle connexion TCP');
+// Exportation
+module.exports = UniversalGpsConverter;
 
-      socket.on('data', async data => {
-        try {
-          const decodedMessage = this.decoder.decodeMessage(data);
-          
-          // Gestion des différents types de messages
-          switch (decodedMessage.type) {
-            case 'login':
-              console.log(`Connexion du tracker IMEI: ${decodedMessage.imei}`);
-              this.handleLogin(decodedMessage.imei);
-              break;
-
-            case 'position':
-              console.log('Données de position reçues', decodedMessage);
-              await this.savePositionData(decodedMessage);
-              break;
-
-            case 'status':
-              console.log('Statut du tracker', decodedMessage);
-              break;
-
-            case 'heartbeat':
-              console.log('Heartbeat reçu', decodedMessage);
-              this.handleHeartbeat(decodedMessage);
-              break;
-
-            case 'unknown':
-              console.log('Message non reconnu détaillé:', decodedMessage);
-              this.logUnknownMessage(decodedMessage);
-              break;
-
-            default:
-              console.log('Message non géré', decodedMessage);
-          }
-
-          // Réponse de confirmation (si nécessaire)
-          this.sendConfirmation(socket, decodedMessage);
-        } catch (error) {
-          console.error('Erreur de décodage:', error);
-        }
-      });
-
-      socket.on('error', err => console.error("Erreur socket :", err));
-      socket.on('end', () => console.log("Connexion terminée"));
-    });
-
-    return server;
-  }
-
-  // Méthode de gestion de la connexion du tracker
-  async handleLogin(imei) {
-    try {
-      console.log(`Tracker ${imei} connecté`);
-      // Logique supplémentaire si nécessaire
-    } catch (error) {
-      console.error('Erreur lors de la gestion du login:', error);
-    }
-  }
-
-  // Gestion des heartbeats
-  handleHeartbeat(heartbeatData) {
-    console.log('Heartbeat traité:', heartbeatData);
-  }
-
-  // Enregistrement des messages inconnus pour analyse
-  logUnknownMessage(messageData) {
-    console.log('Détails du message inconnu:', JSON.stringify(messageData, null, 2));
-    // Possibilité d'ajouter une logique pour stocker ces messages pour analyse
-  }
-
-  // Envoi d'une confirmation au tracker
-  sendConfirmation(socket, message) {
-    // Implémentation basique de confirmation
-    // Le format exact dépend du protocole spécifique du tracker
-    try {
-      // Exemple de confirmation générique
-      const confirmationBuffer = Buffer.from([0x78, 0x78, 0x05, 0x01, 0x00, 0x00, 0x0D, 0x0A]);
-      socket.write(confirmationBuffer);
-    } catch (error) {
-      console.error('Erreur lors de l\'envoi de la confirmation:', error);
-    }
-  }
-
-  // Méthode de sauvegarde des données de position
-  async savePositionData(positionData) {
-    try {
-      const { latitude, longitude, speed, date } = positionData;
-
-      // Vérifier si le deviceId existe déjà
-      const existingGpsEntry = await GpsData.findOne({ 
-        deviceId: positionData.imei || 'unknown' 
-      });
-
-      if (existingGpsEntry) {
-        // Mise à jour des données existantes
-        await GpsData.updateOne(
-          { deviceId: positionData.imei || 'unknown' },
-          { 
-            latitude, 
-            longitude, 
-            speed: speed || 0, 
-            date: date || new Date(),
-            updatedAt: new Date() 
-          }
-        );
-        console.log("Données GPS mises à jour !");
-      } else {
-        // Création d'un nouvel enregistrement si deviceId n'existe pas
-        const gpsEntry = new GpsData({ 
-          deviceId: positionData.imei || 'unknown', 
-          latitude, 
-          longitude, 
-          speed: speed || 0,
-          date: date || new Date()
-        });
-        await gpsEntry.save();
-        console.log("Nouvelles données GPS enregistrées !");
-      }
-    } catch (error) {
-      console.error("Erreur lors de l'enregistrement des données GPS :", error);
-    }
-  }
-
-  // Démarrage du serveur
-  start(port = process.env.TCP_PORT || 5000) {
-    const server = this.createServer();
-    server.listen(port, '0.0.0.0', () => {
-      console.log(`Serveur TCP GT06N en écoute sur le port ${port}`);
-    });
-  }
-}
-
-// Exportation pour utilisation
-module.exports = {
-  GT06NDecoder,
-  GT06NServer
-};
-
-// Démarrage automatique du serveur si le fichier est exécuté directement
+// Exemple de test
 if (require.main === module) {
-  const server = new GT06NServer();
-  server.start();
+  // Tests des différents protocoles
+  const testCases = [
+    { data: '7878...', protocol: 'GT06N' },
+    { data: '$GPRMC,...', protocol: 'XEXUN' },
+    { data: '*HQ,...', protocol: 'COBAN' }
+  ];
+
+  testCases.forEach(test => {
+    console.log(
+      `Test ${test.protocol}:`, 
+      gpsConverter.convert(test.data, test.protocol)
+    );
+  });
 }
