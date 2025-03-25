@@ -13,18 +13,25 @@ const server = net.createServer(socket => {
     socket.on('data', async data => {
         // Affichage des données brutes en hexadécimal pour comprendre leur format
         console.log("Données brutes reçues (Hex) : ", data.toString('hex'));
-
-        // Essayons de lire le message en binaire en décodant à partir du buffer
-        const buffer = data;
-        console.log("Données brutes reçues (Buffer) : ", buffer);
+        console.log("Données brutes reçues (Buffer) : ", data);
 
         try {
-            // Si vous avez des informations sur la structure des données, vous pouvez les parser directement à partir du buffer.
-            // Exemple pour un décodage d'IMEI (premiers 15 caractères) et latitude/longitude
-            const imei = buffer.toString('ascii', 0, 15);  // Exemple: IMEI à partir des 15 premiers octets
-            const latitude = buffer.readFloatLE(15); // Exemple: lecture de latitude en 4 octets
-            const longitude = buffer.readFloatLE(19); // Exemple: lecture de longitude en 4 octets
-            const speed = buffer.readUInt8(23); // Exemple: lecture de la vitesse à partir de l'octet 23
+            // Vérification de la taille du buffer
+            const buffer = data;
+            if (buffer.length < 18) {
+                console.log("Le buffer est trop petit pour contenir toutes les données attendues");
+                return;
+            }
+
+            // Lecture de l'IMEI (identifiant du périphérique) à partir des premiers octets
+            const imei = buffer.toString('ascii', 0, 15); // Supposons que l'IMEI fait 15 octets
+
+            // Lecture de la latitude (4 octets à partir du 16e octet)
+            const latitude = buffer.readFloatLE(15);
+            // Lecture de la longitude (4 octets à partir du 19e octet)
+            const longitude = buffer.readFloatLE(19);
+            // Lecture de la vitesse (1 octet à partir du 23e octet)
+            const speed = buffer.readUInt8(23);
 
             console.log(`Données décodées : IMEI: ${imei}, Latitude: ${latitude}, Longitude: ${longitude}, Vitesse: ${speed}`);
 
