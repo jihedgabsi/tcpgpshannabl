@@ -1,5 +1,5 @@
 const net	= require('net');
-const gt06 = require('./gt06n.js').gt06n;
+const gt06 = require('./gt06n.js').gt06;
 
 const server = net.createServer((connection) => {
     connection.setEncoding('hex');
