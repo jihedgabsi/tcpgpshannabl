@@ -1,27 +1,27 @@
 const net = require('net');
-const gt06 = require('./gt06n.js').gt06; // Assurez-vous d'avoir le module gt06n.js adapté
+const gt06 = require('./gt06n.js').gt06;
 
 const server = net.createServer((connection) => {
-    // Définir l'encodage pour que les données soient en hexadécimal
     connection.setEncoding('hex');
 
     connection.on('data', (data) => {
         const result = gt06.parse(data);
         console.log('Données décodées:', result);
 
-        // Répondre directement au message de login (event '01')
         if (result.event === '01') {
-            // Envoi de la trame de réponse : 787805010001D9DC0D0A
+            // Répondre au login
             const response = Buffer.from('787805010001D9DC0D0A', 'hex');
             connection.write(response);
             console.log('Réponse login envoyée:', response.toString('hex'));
+        } else if (result.event === '12' && result.parsed) {
+            // Afficher les données de localisation (exemple pour des messages type '12')
+            console.log(`📍 Position: Latitude: ${result.parsed.latitude}, Longitude: ${result.parsed.longitude}, Vitesse: ${result.parsed.speed} km/h, Date & Heure: ${result.parsed.datetime}`);
+        } else if (result.event === '13' && result.parsed) {
+            // Afficher les informations de statut (exemple pour des messages type '13')
+            console.log("🔹 Statut GPS:", result.parsed);
         } else {
-            console.log('Message reçu (non-login) :', data);
+            console.log("⚠️ Paquet inconnu ou non traité:", result);
         }
-    });
-
-    connection.on('error', (err) => {
-        console.error('Erreur sur la connexion:', err);
     });
 
 }).listen(5000);
