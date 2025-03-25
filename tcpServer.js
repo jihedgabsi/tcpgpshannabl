@@ -12,39 +12,50 @@ const server = net.createServer(socket => {
 
     socket.on('data', async data => {
         const message = data.toString().trim();
-        console.log(`Données reçues : ${message}`);
+        console.log(`Données JSON reçues : ${message}`);
 
-        // Exemple de format attendu : "123456,48.8566,2.3522,30"
-        const parts = message.split(',');
+        try {
+            // Parse les données JSON
+            const jsonData = JSON.parse(message);
+            console.log('Contenu JSON parsé :', JSON.stringify(jsonData, null, 2));
 
-        if (parts.length === 4) {
-            const deviceId = parts[0];
-            const latitude = parseFloat(parts[1]);
-            const longitude = parseFloat(parts[2]);
-            const speed = parseFloat(parts[3]);
+            // Vérifier si les champs nécessaires sont présents
+            if (jsonData.deviceId && jsonData.latitude && jsonData.longitude) {
+                try {
+                    // Vérifier si le deviceId existe déjà
+                    const existingGpsEntry = await GpsData.findOne({ deviceId: jsonData.deviceId });
 
-            try {
-                // Vérifier si le deviceId existe déjà
-                const existingGpsEntry = await GpsData.findOne({ deviceId });
-
-                if (existingGpsEntry) {
-                    // Mise à jour des données existantes
-                    await GpsData.updateOne(
-                        { deviceId },
-                        { latitude, longitude, speed, updatedAt: new Date() }
-                    );
-                    console.log("Données GPS mises à jour !");
-                } else {
-                    // Création d'un nouvel enregistrement si deviceId n'existe pas
-                    const gpsEntry = new GpsData({ deviceId, latitude, longitude, speed });
-                    await gpsEntry.save();
-                    console.log("Nouvelles données GPS enregistrées !");
+                    if (existingGpsEntry) {
+                        // Mise à jour des données existantes
+                        await GpsData.updateOne(
+                            { deviceId: jsonData.deviceId },
+                            { 
+                                latitude: jsonData.latitude, 
+                                longitude: jsonData.longitude, 
+                                speed: jsonData.speed || 0,
+                                updatedAt: new Date() 
+                            }
+                        );
+                        console.log("Données GPS mises à jour !");
+                    } else {
+                        // Création d'un nouvel enregistrement si deviceId n'existe pas
+                        const gpsEntry = new GpsData({
+                            deviceId: jsonData.deviceId,
+                            latitude: jsonData.latitude,
+                            longitude: jsonData.longitude,
+                            speed: jsonData.speed || 0
+                        });
+                        await gpsEntry.save();
+                        console.log("Nouvelles données GPS enregistrées !");
+                    }
+                } catch (error) {
+                    console.error("Erreur lors de l'enregistrement des données GPS :", error);
                 }
-            } catch (error) {
-                console.error("Erreur lors de l'enregistrement des données GPS :", error);
+            } else {
+                console.log("Données JSON incomplètes");
             }
-        } else {
-            console.log("Format incorrect");
+        } catch (parseError) {
+            console.error("Erreur de parsing JSON :", parseError);
         }
     });
 
