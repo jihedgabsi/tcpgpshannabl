@@ -3,7 +3,7 @@ const net = require('net');
 const PORT = process.env.TCP_PORT || 5000;
 const clients = [];
 
-// Fonction pour extraire l'IMEI du message de connexion
+// Fonction pour extraire l'IMEI (en BCD)
 function extractIMEI(hexString) {
     let imei = "";
     for (let i = 8; i < 24; i += 2) {
@@ -23,8 +23,13 @@ function parseGT06Data(data) {
         return null;
     }
 
-    // Type de message (byte après 7878)
-    const messageType = hexString.substring(4, 6);
+    // Extraction correcte de la longueur et du type de message
+    const lengthHex = hexString.substring(4, 6);
+    const length = parseInt(lengthHex, 16);
+    const messageType = hexString.substring(6, 8);
+
+    console.log(`📝 Longueur annoncée : ${length} octets`);
+    console.log(`🆔 Type de message : ${messageType}`);
 
     if (messageType === '01') {
         // 📡 **Message de connexion (Login Message)**
