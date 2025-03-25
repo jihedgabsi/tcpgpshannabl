@@ -9,7 +9,6 @@ module.exports.gt06 = (function(){
         '80' : 'Command information sent by the server to the terminal',
     };
 
-    // Décodage du message de login
     const parseLogin = (data) => {
         return {
             'eventType': eventTypes['01'],
@@ -19,7 +18,6 @@ module.exports.gt06 = (function(){
         };
     };
 
-    // Conversion d'une date/heure encodée en hexadécimal en format lisible
     const parseDatetime = (data) => {
         const parts = {
             'year': data.substr(0,2),
@@ -39,7 +37,6 @@ module.exports.gt06 = (function(){
         return `${y}-${m}-${d} ${h}:${i}:${s}`;
     };
 
-    // Conversion hexadécimal vers binaire
     const hex2bin = (hex) => {
         let bin = (parseInt(hex, 16)).toString(2);
         const hexLen = hex.length / 2 * 8;
@@ -49,7 +46,6 @@ module.exports.gt06 = (function(){
         return bin;
     };
 
-    // Conversion d'une coordonnée hexadécimale en degré décimal
     const parseCoordinate = (hex, direction) => {
         let value = parseInt(hex, 16) / 1800000; // Conversion adaptée selon le protocole
         if (direction === 'S' || direction === 'W') {
@@ -58,8 +54,8 @@ module.exports.gt06 = (function(){
         return value;
     };
 
-    // Décodage des messages de localisation
     const parseLocation = (data) => {
+        // Ici, nous supposons que la trame est au moins conforme à celle du type 12 (Location Data)
         const datasheet = {
             'datetime': data.substr(8,12),
             'quantity': data.substr(20,2),
@@ -77,9 +73,11 @@ module.exports.gt06 = (function(){
         };
 
         const courseBin = hex2bin(datasheet.course);
-        // Le bit indiquant la direction (latitude et longitude) se trouve dans courseBin
-        const northLatitude = courseBin.substr(5, 1) === '1'; // 1 = Nord, 0 = Sud
-        const eastLongitude  = courseBin.substr(4, 1) === '1'; // 1 = Est,  0 = Ouest
+        // Pour la direction, on suppose :
+        // - northLatitude : bit à l'index 5 (1 = Nord, 0 = Sud)
+        // - eastLongitude : bit à l'index 4 (1 = Est, 0 = Ouest)
+        const northLatitude = courseBin.substr(5, 1) === '1';
+        const eastLongitude  = courseBin.substr(4, 1) === '1';
 
         return {
             'datetime': parseDatetime(datasheet.datetime),
@@ -98,7 +96,6 @@ module.exports.gt06 = (function(){
         };
     };
 
-    // Décodage des messages d'alarme
     const parseAlarm = (data) => {
         const datasheet = {
             'start_bit': data.substr(0,4),
@@ -138,7 +135,6 @@ module.exports.gt06 = (function(){
         };
     };
 
-    // Décodage du statut
     const parseStatusPackage = (courseBin) => {
         return {
             'real_time_gps': courseBin.substr(2,1),
@@ -154,12 +150,10 @@ module.exports.gt06 = (function(){
         return parseStatusPackage(statusBin);
     };
 
-    // Sélection de l'événement à partir des données
     const selectEvent = (data) => {
         return data.substr(6,2);
     };
 
-    // Fonction principale de parsing
     const parse = (data) => {
         let response;
         const event = selectEvent(data);
@@ -196,5 +190,6 @@ module.exports.gt06 = (function(){
         };
     };
 
-    return { parse: parse };
+    // On exporte également la fonction parseLocation pour conversion forcée
+    return { parse: parse, parseLocation: parseLocation };
 })();
