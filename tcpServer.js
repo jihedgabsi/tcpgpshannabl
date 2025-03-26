@@ -1,47 +1,58 @@
 const net = require('net');
-const gt06 = require('./gt06n');
+const gt06 = require('./gt06n'); // Vérifie si le module gt06n est bien défini
 
 const PORT = 5000;
 
 const server = net.createServer((socket) => {
-    console.log(`New connection from ${socket.remoteAddress}:${socket.remotePort}`);
+    console.log(`✅ Nouvelle connexion : ${socket.remoteAddress}:${socket.remotePort}`);
 
     socket.on('data', (data) => {
         try {
-            // Convert buffer to hexadecimal string
-            const hexData = data.toString('hex').toUpperCase();
-            
-            // Parse the received GPS data
-            const parsedData = gt06.parse(hexData);
-            
-            console.log('Received GPS Data:', JSON.stringify(parsedData, null, 2));
+            if (!data || data.length === 0) {
+                console.warn('⚠️ Données vides reçues, ignorées.');
+                return;
+            }
 
-            // Optional: Send acknowledgment back to the tracker
-            const ack = Buffer.from('OK', 'ascii');
+            // Convertir le buffer en une chaîne hexadécimale
+            const hexData = data.toString('hex').toUpperCase();
+            console.log(`📥 Données reçues (HEX) : ${hexData}`);
+
+            // Parser les données GPS avec la bibliothèque gt06
+            if (typeof gt06.parse === 'function') {
+                const parsedData = gt06.parse(hexData);
+                console.log('📍 Données GPS reçues :', JSON.stringify(parsedData, null, 2));
+            } else {
+                console.error('❌ Erreur : la fonction gt06.parse() est introuvable.');
+            }
+
+            // 📌 Répondre avec un ACK valide pour GT06N
+            const ack = Buffer.from('787805010001D9DC0D0A', 'hex'); // Exemple d'ACK pour un login
             socket.write(ack);
+            console.log('✅ ACK envoyé au tracker.');
+
         } catch (error) {
-            console.error('Error parsing GPS data:', error);
+            console.error('❌ Erreur lors du parsing des données GPS :', error);
         }
     });
 
     socket.on('error', (error) => {
-        console.error(`Socket error: ${error.message}`);
+        console.error(`⚠️ Erreur socket (${socket.remoteAddress}): ${error.message}`);
     });
 
     socket.on('close', () => {
-        console.log(`Connection from ${socket.remoteAddress} closed`);
+        console.log(`🔌 Connexion fermée : ${socket.remoteAddress}`);
     });
 });
 
 server.listen(PORT, () => {
-    console.log(`GT06N GPS Server listening on port ${PORT}`);
+    console.log(`🚀 Serveur GT06N démarré sur le port ${PORT}`);
 });
 
-// Error handling for server
+// Gestion des erreurs globales
 server.on('error', (error) => {
-    console.error(`Server error: ${error.message}`);
+    console.error(`❌ Erreur serveur : ${error.message}`);
 });
 
 process.on('uncaughtException', (error) => {
-    console.error('Uncaught Exception:', error);
+    console.error('🔥 Erreur critique non gérée :', error);
 });
