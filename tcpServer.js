@@ -18,17 +18,33 @@ const server = net.createServer((socket) => {
             console.log(`📥 Données reçues (HEX) : ${hexData}`);
 
             // Parser les données GPS avec la bibliothèque gt06
+            let parsedData;
             if (typeof gt06.parse === 'function') {
-                const parsedData = gt06.parse(hexData);
+                parsedData = gt06.parse(hexData);
                 console.log('📍 Données GPS reçues :', JSON.stringify(parsedData, null, 2));
             } else {
                 console.error('❌ Erreur : la fonction gt06.parse() est introuvable.');
+                return;
             }
 
-            // 📌 Répondre avec un ACK valide pour GT06N
-            const ack = Buffer.from('787805010001D9DC0D0A', 'hex'); // Exemple d'ACK pour un login
+            // Générer un ACK approprié en fonction du type d'événement
+            let ack;
+            const event = parsedData.event;
+           
+            // Extraire le numéro de séquence (les derniers bytes avant 0D0A)
+            // Pour la plupart des paquets, le numéro de séquence est les 2 octets avant 0D0A
+            const seqNumber = hexData.substring(hexData.length - 6, hexData.length - 4);
+           
+            if (event === '01') {
+                // ACK pour login
+                ack = Buffer.from(`78780501${seqNumber}0D0A`, 'hex');
+            } else {
+                // ACK standard pour les autres types d'événements (12, 13, 16, etc.)
+                ack = Buffer.from(`78780501${seqNumber}0D0A`, 'hex');
+            }
+
             socket.write(ack);
-            console.log('✅ ACK envoyé au tracker.');
+            console.log(`✅ ACK envoyé au tracker: ${ack.toString('hex').toUpperCase()}`);
 
         } catch (error) {
             console.error('❌ Erreur lors du parsing des données GPS :', error);
